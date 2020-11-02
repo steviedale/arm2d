@@ -1,0 +1,28 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/arm2d/polygon.h
+boost/geometry.hpp
+-
+boost/geometry/geometries/point_xy.hpp
+-
+boost/geometry/geometries/polygon.hpp
+-
+
+/home/stevie/git/arm2d/src/arm2d.cpp
+arm2d/polygon.h
+/home/stevie/git/arm2d/src/arm2d/polygon.h
+iostream
+-
+
+/home/stevie/git/arm2d/src/polygon.cpp
+arm2d/polygon.h
+/home/stevie/git/arm2d/src/arm2d/polygon.h
+deque
+-
+
