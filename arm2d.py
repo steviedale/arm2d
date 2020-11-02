@@ -18,10 +18,13 @@ class Arm2d(gym.Env):
         self.ARM_LENGTH = 100
         self.ARM_WIDTH = 10
         self.JOINT_ROT_LIMIT = (3/4) * np.pi
+        self.CIRCLE_RADIUS = 5
+        self.CIRCLE_COLOR = (0, 0, 0)
 
         self.viewer = None
         self.arm_polygons = None
         self.joint_angles = None
+        self.end_effect_position = None
 
     def _check_joint_limits(self, action):
         assert(len(action) == self.NUM_ARMS)
@@ -118,10 +121,12 @@ class Arm2d(gym.Env):
             assert(None not in points)
             self.arm_polygons[i] = Polygon(points)
             self.joint_angles[i] += joint_angle_inc[i]
+        self.end_effect_position = position
 
     def reset(self):
         self.arm_polygons = []
         self.joint_angles = []
+        self.end_effect_position = [0, self.ARM_LENGTH * self.NUM_ARMS]
 
         for i in range(self.NUM_ARMS):
             points = [
@@ -146,6 +151,13 @@ class Arm2d(gym.Env):
             x_list, y_list = polygon.exterior.coords.xy
             points = [(x+self.SCREEN_WIDTH/2, y+self.SCREEN_HEIGHT/2) for x, y in zip(x_list, y_list)]
             self.viewer.draw_polygon(points, color=self.ARM_COLORS[i])
+        # draw end effector
+        t = rendering.Transform(translation=(self.SCREEN_WIDTH/2 + self.end_effect_position[0],
+                                             self.SCREEN_HEIGHT/2 + self.end_effect_position[1]))
+        self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.CIRCLE_COLOR).add_attr(t)
+        # draw base
+        t = rendering.Transform(translation=(self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2))
+        self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.CIRCLE_COLOR).add_attr(t)
         return self.viewer.render(return_rgb_array='rgb_array')
 
 
