@@ -15,7 +15,8 @@ class Arm2d(gym.Env):
         self.NUM_ARMS = 6
         self.ARM_LENGTH = (self.SCREEN_HEIGHT/2) / self.NUM_ARMS
         self.ARM_WIDTH = self.ARM_LENGTH / 10
-        self.JOINT_ROT_LIMIT = (3/4) * np.pi
+        self.JOINT_ROT_LIMIT = (7/8) * np.pi
+        self.MAX_ANGLE_INC = (1/100) * np.pi
         self.CIRCLE_RADIUS = 5
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
@@ -38,19 +39,15 @@ class Arm2d(gym.Env):
         self.end_effect_position = None
         self.target_position = None
 
-    def _check_joint_limits(self, action):
-        assert(len(action) == self.NUM_ARMS)
-        for joint_movement, joint_angle in zip(action, self.joint_angles):
-            if abs(joint_angle + joint_movement) > self.JOINT_ROT_LIMIT:
-                return False
-            return True
+    def _check_joint_limit_violation(self):
+        return np.max(np.abs(self.joint_angles)) > self.JOINT_ROT_LIMIT
 
-    def _update_arm_polygons(self, joint_angle_inc):
+    def _update_arm_polygons(self):
         angle = 0
         position = (0, 0)
         for i in range(self.NUM_ARMS):
             points = [None, None, None, None]
-            angle += self.joint_angles[i] + joint_angle_inc[i]
+            angle += self.joint_angles[i]
             # this shouldn't happen
             assert(2*np.pi > angle > -2*np.pi)
             # normalize angle
@@ -132,8 +129,19 @@ class Arm2d(gym.Env):
                 assert(False)
             assert(None not in points)
             self.arm_polygons[i] = Polygon(points)
-            self.joint_angles[i] += joint_angle_inc[i]
         self.end_effect_position = position
+
+    def _set_random_robot_position(self):
+        collision = True
+        counter = 0
+        while collision:
+            for i in range(self.NUM_ARMS):
+                self.joint_angles[i] = -self.JOINT_ROT_LIMIT + np.random.random() * self.JOINT_ROT_LIMIT * 2
+            self._update_arm_polygons()
+            collision = self._check_arm_collisions()
+            counter += 1
+        if DEBUG:
+            print("_set_random_robot_position took {} attempts".format(counter))
 
     def _check_arm_collisions(self):
         collision = False
@@ -149,34 +157,40 @@ class Arm2d(gym.Env):
         return (abs(self.end_effect_position[0] - self.target_position[0]) < self.TARGET_TOLERANCE and
                 abs(self.end_effect_position[1] - self.target_position[1]) < self.TARGET_TOLERANCE)
 
-    def reset(self):
-        self.arm_polygons = []
-        self.joint_angles = []
-        self.end_effect_position = [0, self.ARM_LENGTH * self.NUM_ARMS]
-        self.target_position = (100, 200)
-
-        for i in range(self.NUM_ARMS):
-            points = [
-                (-self.ARM_WIDTH/2, i*self.ARM_LENGTH),
-                (-self.ARM_WIDTH/2, (i+1)*self.ARM_LENGTH),
-                (self.ARM_WIDTH/2, (i+1)*self.ARM_LENGTH),
-                (self.ARM_WIDTH/2, i*self.ARM_LENGTH)
-            ]
-            polygon = Polygon(points)
-            self.arm_polygons.append(polygon)
-            self.joint_angles.append(0)
-
     def _get_state(self):
         return self.joint_angles
 
-    def step(self, action):
-        assert(self._check_joint_limits(action))
-        self._update_arm_polygons(action)
+    def reset(self, random_pos=True):
+        self.arm_polygons = [None] * self.NUM_ARMS
+        self.joint_angles = np.zeros((self.NUM_ARMS,))
+        self.end_effect_position = [None, None]
+        self.target_position = (300, 0)
+        if random_pos:
+            self._set_random_robot_position()
+        else:
+            self._update_arm_polygons()
+
+    def step(self, action, render=False):
+        action = np.array(action)
+        max_angle_inc = np.max(np.abs(action))
+        num_steps = int(np.ceil(max_angle_inc/self.MAX_ANGLE_INC))
+        for step in range(num_steps):
+            joint_inc = action / num_steps
+            self.joint_angles += joint_inc
+            self._update_arm_polygons()
+
+            if render:
+                self.render()
+
+            if self._check_joint_limit_violation():
+                state = self._get_state()
+                return state, -100, True, "joint limit reached"
+
+            if self._check_arm_collisions():
+                state = self._get_state()
+                return state, -100, True, "self-collision"
+
         state = self._get_state()
-
-        if self._check_arm_collisions():
-            return state, -100, True, "self-collision"
-
         if self._target_reached():
             return state, 100, True, "target reached"
 
@@ -209,10 +223,15 @@ class Arm2d(gym.Env):
 if __name__ == '__main__':
     import time
     agent = Arm2d()
-    agent.reset()
+    agent.reset(random_pos=False)
     agent.render()
-    while True:
-        inc = np.pi/1000
-        agent.step([-inc, -inc, -inc, -inc, -inc, -inc])
+    done = False
+    start_time = time.time()
+    while not done:
+        inc = np.pi/8
+        # next_state, reward, done, info = agent.step([-inc, -inc, -inc, -inc, -inc, -inc])
+        next_state, reward, done, info = agent.step([inc, 0, 0, 0, 0, 0], render=True)
         agent.render()
-        time.sleep(0.005)
+        # time.sleep(0.1)
+    end_time = time.time()
+    print("duration: {}".format(round(end_time - start_time, 2)))
