@@ -1,7 +1,8 @@
+import numpy as np
+
 import gym
 from gym.envs.classic_control import rendering
 from shapely.geometry import Polygon
-import numpy as np
 import time
 
 
@@ -21,7 +22,7 @@ class Arm2d(gym.Env):
         self.MAX_ACTION_ANGLE = (1/10) * np.pi
         self.TARGET_PROXIMITY_REWARD = 50
         self.CIRCLE_RADIUS = 5
-        self.TARGET_RADIUS = 30
+        self.TARGET_RADIUS = 10
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
         self.TARGET_COLOR = (0, 0.8, 0)
@@ -173,6 +174,9 @@ class Arm2d(gym.Env):
         j = self.joint_angles / self.JOINT_ROT_LIMIT
         p = self.target_position / (self.SCREEN_WIDTH / 2)
         return np.append(j, p)
+
+    def seed(self, seed):
+        np.random.seed(seed)
 
     def reset(self, random_arm_pos=True, random_target_position=True):
         self.arm_polygons = [None] * self.NUM_ARMS
