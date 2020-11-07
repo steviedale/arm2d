@@ -2,6 +2,7 @@ import gym
 from gym.envs.classic_control import rendering
 from shapely.geometry import Polygon
 import numpy as np
+import time
 
 
 DEBUG = False
@@ -12,15 +13,18 @@ class Arm2d(gym.Env):
     def __init__(self):
         self.SCREEN_WIDTH = 600
         self.SCREEN_HEIGHT = self.SCREEN_WIDTH
-        self.NUM_ARMS = 6
+        self.NUM_ARMS = 4
         self.ARM_LENGTH = (self.SCREEN_HEIGHT/2) / self.NUM_ARMS
         self.ARM_WIDTH = self.ARM_LENGTH / 10
         self.JOINT_ROT_LIMIT = (7/8) * np.pi
         self.MAX_ANGLE_INC = (1/100) * np.pi
+        self.MAX_ACTION_ANGLE = (1/10) * np.pi
+        self.TARGET_PROXIMITY_REWARD = 50
         self.CIRCLE_RADIUS = 5
+        self.TARGET_RADIUS = 30
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
-        self.TARGET_COLOR = (0, 1, 0)
+        self.TARGET_COLOR = (0, 0.8, 0)
         self.ARM_COLORS = [
             (0, 0, 1),
             (0, 1, 0),
@@ -29,15 +33,17 @@ class Arm2d(gym.Env):
             (1, 0, 1),
             (1, 1, 0)
         ]
-        self.MOVEMENT_COST = 0.1
-        self.FLAT_COST = 0.1
-        self.TARGET_TOLERANCE = 2
+        self.MOVEMENT_COST = -0.5
+        self.FLAT_COST = self.MOVEMENT_COST * self.MAX_ACTION_ANGLE
+        self.action_space = gym.spaces.Box(-1.0, 1.0, (self.NUM_ARMS,), dtype=np.float32)
+        self.observation_space = gym.spaces.Box(-1.0, 1.0, shape=(self.NUM_ARMS+2,), dtype=np.float32)
 
         self.viewer = None
         self.arm_polygons = None
         self.joint_angles = None
         self.end_effect_position = None
         self.target_position = None
+        self.distance_to_target = None
 
     def _check_joint_limit_violation(self):
         return np.max(np.abs(self.joint_angles)) > self.JOINT_ROT_LIMIT
@@ -137,6 +143,7 @@ class Arm2d(gym.Env):
         while collision:
             for i in range(self.NUM_ARMS):
                 self.joint_angles[i] = -self.JOINT_ROT_LIMIT + np.random.random() * self.JOINT_ROT_LIMIT * 2
+                # self.joint_angles[i] = -(self.JOINT_ROT_LIMIT/2) + np.random.random() * self.JOINT_ROT_LIMIT
             self._update_arm_polygons()
             collision = self._check_arm_collisions()
             counter += 1
@@ -154,24 +161,44 @@ class Arm2d(gym.Env):
         return collision
 
     def _target_reached(self):
-        return (abs(self.end_effect_position[0] - self.target_position[0]) < self.TARGET_TOLERANCE and
-                abs(self.end_effect_position[1] - self.target_position[1]) < self.TARGET_TOLERANCE)
+        return np.max(np.abs(self.end_effect_position - self.target_position)) < self.TARGET_RADIUS
+
+    def _get_distance_to_target(self):
+        return np.linalg.norm(self.end_effect_position - self.target_position)
+
+    def _update_distance_to_target(self):
+        self.distance_to_target = self._get_distance_to_target()
 
     def _get_state(self):
-        return self.joint_angles
+        j = self.joint_angles / self.JOINT_ROT_LIMIT
+        p = self.target_position / (self.SCREEN_WIDTH / 2)
+        return np.append(j, p)
 
-    def reset(self, random_pos=True):
+    def reset(self, random_arm_pos=True, random_target_position=True):
         self.arm_polygons = [None] * self.NUM_ARMS
         self.joint_angles = np.zeros((self.NUM_ARMS,))
         self.end_effect_position = [None, None]
-        self.target_position = (300, 0)
-        if random_pos:
-            self._set_random_robot_position()
-        else:
-            self._update_arm_polygons()
 
-    def step(self, action, render=False):
-        action = np.array(action)
+        if random_arm_pos:
+            self._set_random_robot_position()
+        self._update_arm_polygons()
+
+        if random_target_position:
+            while True:
+                self.target_position = np.random.rand(2) * self.SCREEN_WIDTH - self.SCREEN_WIDTH/2
+                distance_from_center = np.linalg.norm(self.target_position)
+                if distance_from_center < self.SCREEN_WIDTH/2:
+                    break
+        else:
+            self.target_position = np.array([100, 100])
+
+        self._update_distance_to_target()
+        self.initial_distance_to_target = self._get_distance_to_target()
+
+        return self._get_state()
+
+    def step(self, action, continuous_render=True):
+        action = np.array(action) * self.MAX_ACTION_ANGLE
         max_angle_inc = np.max(np.abs(action))
         num_steps = int(np.ceil(max_angle_inc/self.MAX_ANGLE_INC))
         for step in range(num_steps):
@@ -179,8 +206,9 @@ class Arm2d(gym.Env):
             self.joint_angles += joint_inc
             self._update_arm_polygons()
 
-            if render:
+            if continuous_render:
                 self.render()
+                time.sleep(0.01)
 
             if self._check_joint_limit_violation():
                 state = self._get_state()
@@ -190,11 +218,20 @@ class Arm2d(gym.Env):
                 state = self._get_state()
                 return state, -100, True, "self-collision"
 
-        state = self._get_state()
-        if self._target_reached():
-            return state, 100, True, "target reached"
+            if self._target_reached():
+                state = self._get_state()
+                return state, 100, True, "target reached"
 
-        reward = sum(action) * self.MOVEMENT_COST + self.FLAT_COST
+        state = self._get_state()
+
+        reward = 0
+
+        distance_before = self.distance_to_target
+        self._update_distance_to_target()
+        reward += self.TARGET_PROXIMITY_REWARD * (distance_before - self.distance_to_target) / self.initial_distance_to_target
+
+        reward += sum(action) * self.MOVEMENT_COST
+        reward += self.FLAT_COST
         return state, reward, False, ""
 
     def render(self, mode='human'):
@@ -216,14 +253,16 @@ class Arm2d(gym.Env):
         # draw target
         t = rendering.Transform(translation=(self.SCREEN_WIDTH/2 + self.target_position[0],
                                              self.SCREEN_HEIGHT/2 + self.target_position[1]))
-        self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.TARGET_COLOR).add_attr(t)
+        self.viewer.draw_circle(self.TARGET_RADIUS, color=self.TARGET_COLOR).add_attr(t)
         return self.viewer.render(return_rgb_array='rgb_array')
+
+    def seed(self, seed):
+        np.random.seed(seed)
 
 
 if __name__ == '__main__':
-    import time
     agent = Arm2d()
-    agent.reset(random_pos=False)
+    agent.reset(random_arm_pos=False)
     agent.render()
     done = False
     start_time = time.time()
