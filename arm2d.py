@@ -34,8 +34,10 @@ class Arm2d(gym.Env):
             (1, 0, 1),
             (1, 1, 0)
         ]
-        self.MOVEMENT_COST = -0.5
-        self.FLAT_COST = self.MOVEMENT_COST * self.MAX_ACTION_ANGLE
+        self.MOVEMENT_COST = -3.0 / self.MAX_ACTION_ANGLE
+        self.FLAT_COST = -3.0
+        self.JOINT_VIOLATION_COST = -100.0
+
         self.action_space = gym.spaces.Box(-1.0, 1.0, (self.NUM_ARMS,), dtype=np.float32)
         self.observation_space = gym.spaces.Box(-1.0, 1.0, shape=(self.NUM_ARMS+2,), dtype=np.float32)
 
@@ -46,8 +48,15 @@ class Arm2d(gym.Env):
         self.target_position = None
         self.distance_to_target = None
 
-    def _check_joint_limit_violation(self):
-        return np.max(np.abs(self.joint_angles)) > self.JOINT_ROT_LIMIT
+    def _get_joint_violation_vector(self, joint_inc):
+        new_joint_angles = self.joint_angles + joint_inc
+        v = np.zeros(self.NUM_ARMS)
+        for i in range(self.NUM_ARMS):
+            if new_joint_angles[i] > self.JOINT_ROT_LIMIT:
+                v[i] = new_joint_angles[i] - self.JOINT_ROT_LIMIT
+            elif new_joint_angles[i] < -self.JOINT_ROT_LIMIT:
+                v[i] = new_joint_angles[i] + self.JOINT_ROT_LIMIT
+        return v
 
     def _update_arm_polygons(self):
         angle = 0
@@ -203,20 +212,22 @@ class Arm2d(gym.Env):
 
     def step(self, action, continuous_render=True):
         action = np.array(action) * self.MAX_ACTION_ANGLE
+
+        violation_vector = self._get_joint_violation_vector(action)
+        violation_norm = np.linalg.norm(violation_vector)
+        if violation_norm > 1e-9:
+            action -= violation_vector
+
         max_angle_inc = np.max(np.abs(action))
         num_steps = int(np.ceil(max_angle_inc/self.MAX_ANGLE_INC))
+        joint_inc = action / num_steps
         for step in range(num_steps):
-            joint_inc = action / num_steps
             self.joint_angles += joint_inc
             self._update_arm_polygons()
 
             if continuous_render:
                 self.render()
                 time.sleep(0.01)
-
-            if self._check_joint_limit_violation():
-                state = self._get_state()
-                return state, -100, True, "joint limit reached"
 
             if self._check_arm_collisions():
                 state = self._get_state()
@@ -236,6 +247,11 @@ class Arm2d(gym.Env):
 
         reward += sum(action) * self.MOVEMENT_COST
         reward += self.FLAT_COST
+        if violation_norm > 1e-9:
+            reward += self.JOINT_VIOLATION_COST * violation_norm
+            if DEBUG:
+                print("Joint violation: {}".format(violation_vector))
+                print("Joint cost: {}".format(self.JOINT_VIOLATION_COST * violation_norm))
         return state, reward, False, ""
 
     def render(self, mode='human'):
