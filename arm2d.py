@@ -18,11 +18,11 @@ class Arm2d(gym.Env):
         self.ARM_LENGTH = (self.SCREEN_HEIGHT/2) / self.NUM_ARMS
         self.ARM_WIDTH = self.ARM_LENGTH / 10
         self.JOINT_ROT_LIMIT = (7/8) * np.pi
-        self.MAX_ANGLE_INC = (1/100) * np.pi
+        self.INTERPOLATE_ANGLE_INC = (1 / 100) * np.pi
         self.MAX_ACTION_ANGLE = (1/10) * np.pi
         self.TARGET_PROXIMITY_REWARD = 50
         self.CIRCLE_RADIUS = 5
-        self.TARGET_RADIUS = 10
+        self.TARGET_RADIUS = 5
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
         self.TARGET_COLOR = (0, 0.8, 0)
@@ -34,9 +34,11 @@ class Arm2d(gym.Env):
             (1, 0, 1),
             (1, 1, 0)
         ]
-        self.MOVEMENT_COST = -3.0 / self.MAX_ACTION_ANGLE
-        self.FLAT_COST = -3.0
-        self.JOINT_VIOLATION_COST = -100.0
+        # self.MOVEMENT_COST = -3.0 / self.MAX_ACTION_ANGLE
+        # self.FLAT_COST = -3.0
+        self.MOVEMENT_COST = -0.5
+        self.FLAT_COST = self.MOVEMENT_COST * self.MAX_ACTION_ANGLE
+        self.JOINT_VIOLATION_COST = -10.0 / self.MAX_ACTION_ANGLE
 
         self.action_space = gym.spaces.Box(-1.0, 1.0, (self.NUM_ARMS,), dtype=np.float32)
         self.observation_space = gym.spaces.Box(-1.0, 1.0, shape=(self.NUM_ARMS+2,), dtype=np.float32)
@@ -219,7 +221,7 @@ class Arm2d(gym.Env):
             action -= violation_vector
 
         max_angle_inc = np.max(np.abs(action))
-        num_steps = int(np.ceil(max_angle_inc/self.MAX_ANGLE_INC))
+        num_steps = int(np.ceil(max_angle_inc / self.INTERPOLATE_ANGLE_INC))
         joint_inc = action / num_steps
         for step in range(num_steps):
             self.joint_angles += joint_inc
