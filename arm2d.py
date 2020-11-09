@@ -22,7 +22,7 @@ class Arm2d(gym.Env):
         self.MAX_ACTION_ANGLE = (1/10) * np.pi
         self.TARGET_PROXIMITY_REWARD = 50
         self.CIRCLE_RADIUS = 5
-        self.TARGET_RADIUS = 10
+        self.TARGET_RADIUS = 30
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
         self.TARGET_COLOR = (0, 0.8, 0)
@@ -36,6 +36,8 @@ class Arm2d(gym.Env):
         ]
         self.MOVEMENT_COST = -0.5
         self.FLAT_COST = self.MOVEMENT_COST * self.MAX_ACTION_ANGLE
+        # self.MOVEMENT_COST = -1.0 / self.MAX_ACTION_ANGLE
+        # self.FLAT_COST = -1.0
         self.action_space = gym.spaces.Box(-1.0, 1.0, (self.NUM_ARMS,), dtype=np.float32)
         self.observation_space = gym.spaces.Box(-1.0, 1.0, shape=(self.NUM_ARMS+2,), dtype=np.float32)
 
