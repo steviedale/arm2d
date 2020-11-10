@@ -55,19 +55,9 @@ class Arm2d(gym.Env):
         self.target_position = None
         self.distance_to_target = None
 
-    def _get_joint_violation_vector(self, joint_inc):
-        new_joint_angles = self.joint_angles + joint_inc
-        v = np.zeros(self.NUM_ARMS)
-        for i in range(self.NUM_ARMS):
-            if new_joint_angles[i] > self.JOINT_LIMIT:
-                v[i] = new_joint_angles[i] - self.JOINT_LIMIT
-            elif new_joint_angles[i] < -self.JOINT_LIMIT:
-                v[i] = new_joint_angles[i] + self.JOINT_LIMIT
-        return v
-
     def _update_arm_polygons(self):
         angle = 0
-        position = (0, 0)
+        position = np.zeros(2)
         for i in range(self.NUM_ARMS):
             points = [None, None, None, None]
             angle += self.joint_angles[i]
@@ -84,25 +74,25 @@ class Arm2d(gym.Env):
                 points[1] = (position[0] - self.ARM_WIDTH/2, position[1] + self.ARM_LENGTH)
                 points[2] = (position[0] + self.ARM_WIDTH/2, position[1] + self.ARM_LENGTH)
                 points[3] = (position[0] + self.ARM_WIDTH/2, position[1])
-                position = (position[0], position[1] + self.ARM_LENGTH)
+                position[1] += self.ARM_LENGTH
             elif angle == np.pi or angle == -np.pi:
                 points[0] = (position[0] + self.ARM_WIDTH/2, position[1])
                 points[1] = (position[0] + self.ARM_WIDTH/2, position[1] - self.ARM_LENGTH)
                 points[2] = (position[0] - self.ARM_WIDTH/2, position[1] - self.ARM_LENGTH)
                 points[3] = (position[0] - self.ARM_WIDTH/2, position[1])
-                position = (position[0], position[1] - self.ARM_LENGTH)
+                position[1] -= self.ARM_LENGTH
             elif angle == np.pi/2:
                 points[0] = (position[0], position[1] + self.ARM_WIDTH/2)
                 points[1] = (position[0] + self.ARM_LENGTH, position[1] + self.ARM_WIDTH/2)
                 points[2] = (position[0] + self.ARM_LENGTH, position[1] - self.ARM_WIDTH/2)
                 points[3] = (position[0], position[1] - self.ARM_WIDTH/2)
-                position = (position[0] + self.ARM_LENGTH, position[1])
+                position[0] += self.ARM_LENGTH
             elif angle == -np.pi/2:
                 points[0] = (position[0], position[1] - self.ARM_WIDTH/2)
                 points[1] = (position[0] - self.ARM_LENGTH, position[1] - self.ARM_WIDTH/2)
                 points[2] = (position[0] - self.ARM_LENGTH, position[1] + self.ARM_WIDTH/2)
                 points[3] = (position[0], position[1] + self.ARM_WIDTH/2)
-                position = (position[0] - self.ARM_LENGTH, position[1])
+                position[0] -= self.ARM_LENGTH
             elif -np.pi < angle < -np.pi/2:
                 theta = -angle - np.pi/2
                 x_w = self.ARM_WIDTH/2 * np.sin(theta)
@@ -113,7 +103,7 @@ class Arm2d(gym.Env):
                 points[1] = (position[0] + x_w + x_l, position[1] + y_w + y_l)
                 points[2] = (position[0] - x_w + x_l, position[1] - y_w + y_l)
                 points[3] = (position[0] - x_w, position[1] - y_w)
-                position = (position[0] + x_l, position[1] + y_l)
+                position += np.array([x_l, y_l])
             elif -np.pi/2 < angle < 0:
                 theta = -angle
                 x_w = -self.ARM_WIDTH/2 * np.cos(theta)
@@ -124,7 +114,7 @@ class Arm2d(gym.Env):
                 points[1] = (position[0] + x_w + x_l, position[1] + y_w + y_l)
                 points[2] = (position[0] - x_w + x_l, position[1] - y_w + y_l)
                 points[3] = (position[0] - x_w, position[1] - y_w)
-                position = (position[0] + x_l, position[1] + y_l)
+                position += np.array([x_l, y_l])
             elif 0 < angle < np.pi/2:
                 theta = angle
                 x_w = -self.ARM_WIDTH/2 * np.cos(theta)
@@ -135,7 +125,7 @@ class Arm2d(gym.Env):
                 points[1] = (position[0] + x_w + x_l, position[1] + y_w + y_l)
                 points[2] = (position[0] - x_w + x_l, position[1] - y_w + y_l)
                 points[3] = (position[0] - x_w, position[1] - y_w)
-                position = (position[0] + x_l, position[1] + y_l)
+                position += np.array([x_l, y_l])
             elif np.pi/2 < angle < np.pi:
                 theta = angle - np.pi/2
                 x_w = self.ARM_WIDTH/2 * np.sin(theta)
@@ -146,10 +136,11 @@ class Arm2d(gym.Env):
                 points[1] = (position[0] + x_w + x_l, position[1] + y_w + y_l)
                 points[2] = (position[0] - x_w + x_l, position[1] - y_w + y_l)
                 points[3] = (position[0] - x_w, position[1] - y_w)
-                position = (position[0] + x_l, position[1] + y_l)
+                position += np.array([x_l, y_l])
+            # this shouldn't happen
             else:
-                # this shouldn't happen
                 assert(False)
+            # neither should this
             assert(None not in points)
             self.arm_polygons[i] = Polygon(points)
         self.end_effector_position = position
@@ -206,11 +197,11 @@ class Arm2d(gym.Env):
             raise Exception("random_target_position and target_start_position are mutually exclusive")
 
         self.arm_polygons = [None] * self.NUM_ARMS
-        self.joint_angles = np.zeros((self.NUM_ARMS,))
-        self.end_effector_position = [None] * 2
-        self.target_position = np.ones((2,)) * 100.0
+        self.joint_angles = np.zeros(self.NUM_ARMS)
+        self.end_effector_position = np.zeros(2)
+        self.target_position = np.ones(2) * 100.0
 
-        if arm_start_position:
+        if arm_start_position is not None:
             self.joint_angles = arm_start_position
 
         if random_arm_position:
@@ -218,7 +209,7 @@ class Arm2d(gym.Env):
 
         self._update_arm_polygons()
 
-        if target_position:
+        if target_position is not None:
             self.target_position = target_position
 
         if random_target_position:
@@ -237,12 +228,6 @@ class Arm2d(gym.Env):
         action = np.array(action) * self.MAX_JOINT_ROTATION
         info = {'violations': []}
 
-        # calculate joint limit violation
-        jlv_vec = self._get_joint_violation_vector(action)
-        jlv_norm = np.linalg.norm(jlv_vec)
-        # remove violation from action
-        if jlv_norm > 1e-9:
-            action -= jlv_vec
         reward = 0
         # calculate interpolation steps
         max_angle_inc = np.max(np.abs(action))
