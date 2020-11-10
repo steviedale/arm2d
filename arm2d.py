@@ -262,6 +262,7 @@ class Arm2d(gym.Env):
                 self.joint_angles -= joint_inc
                 self._update_arm_polygons()
                 reward += self.COLLISION_COST * np.linalg.norm(joint_inc * (num_steps - step))
+                info['violations'].append('arm_self_collision')
                 break
 
             if self._joint_limit_violated():
@@ -269,6 +270,7 @@ class Arm2d(gym.Env):
                 self.joint_angles -= joint_inc
                 self._update_arm_polygons()
                 reward += self.JOINT_LIMIT_VIOLATION_COST * np.linalg.norm(joint_inc * (num_steps - step))
+                info['violations'].append('joint_limit_violation')
                 break
 
             if self._target_reached():
