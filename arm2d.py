@@ -197,14 +197,29 @@ class Arm2d(gym.Env):
     def seed(self, seed):
         np.random.seed(seed)
 
-    def reset(self, random_arm_pos=True, random_target_position=True):
+    def reset(self, random_arm_position=True, random_target_position=True, arm_start_position=None,
+              target_start_position=None):
+        # ensure parameters are contradictory
+        if random_arm_position and arm_start_position:
+            raise Exception("random_arm_position and arm_start_position are mutually exclusive")
+        if random_target_position and target_start_position:
+            raise Exception("random_target_position and target_start_position are mutually exclusive")
+
         self.arm_polygons = [None] * self.NUM_ARMS
         self.joint_angles = np.zeros((self.NUM_ARMS,))
-        self.end_effector_position = [None, None]
+        self.end_effector_position = [None] * 2
+        self.target_position = np.ones((2,)) * 100.0
 
-        if random_arm_pos:
+        if arm_start_position:
+            self.joint_angles = arm_start_position
+
+        if random_arm_position:
             self._set_random_robot_position()
+
         self._update_arm_polygons()
+
+        if target_start_position:
+            self.target_position = target_start_position
 
         if random_target_position:
             while True:
@@ -212,8 +227,6 @@ class Arm2d(gym.Env):
                 distance_from_center = np.linalg.norm(self.target_position)
                 if distance_from_center < self.SCREEN_WIDTH/2 and not self._target_reached():
                     break
-        else:
-            self.target_position = np.array([100, 100])
 
         self._update_distance_to_target()
         self.initial_distance_to_target = self._get_distance_to_target()
@@ -308,7 +321,7 @@ class Arm2d(gym.Env):
 
 if __name__ == '__main__':
     agent = Arm2d()
-    agent.reset(random_arm_pos=False)
+    agent.reset(random_arm_position=False)
     agent.render()
     done = False
     start_time = time.time()
