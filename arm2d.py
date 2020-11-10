@@ -12,17 +12,18 @@ DEBUG = False
 class Arm2d(gym.Env):
 
     def __init__(self):
+        # MEASUREMENTS
         self.SCREEN_WIDTH = 600
         self.SCREEN_HEIGHT = self.SCREEN_WIDTH
         self.NUM_ARMS = 4
         self.ARM_LENGTH = (self.SCREEN_HEIGHT/2) / self.NUM_ARMS
         self.ARM_WIDTH = self.ARM_LENGTH / 10
-        self.JOINT_ROT_LIMIT = (7/8) * np.pi
-        self.INTERPOLATE_ANGLE_INC = (1 / 100) * np.pi
-        self.MAX_ACTION_ANGLE = (1/10) * np.pi
-        self.TARGET_PROXIMITY_REWARD = 50
+        self.JOINT_LIMIT = (7 / 8) * np.pi
+        self.INTERPOLATE_INC = (1 / 100) * np.pi
+        self.MAX_JOINT_ROTATION = (1 / 10) * np.pi
         self.CIRCLE_RADIUS = 5
-        self.TARGET_RADIUS = 5
+        self.TARGET_RADIUS = 30
+        # COLORS
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
         self.TARGET_COLOR = (0, 0.8, 0)
@@ -34,18 +35,23 @@ class Arm2d(gym.Env):
             (1, 0, 1),
             (1, 1, 0)
         ]
-        # self.MOVEMENT_COST = -3.0 / self.MAX_ACTION_ANGLE
-        # self.FLAT_COST = -3.0
-        self.MOVEMENT_COST = -0.5
-        self.FLAT_COST = self.MOVEMENT_COST * self.MAX_ACTION_ANGLE
-        self.JOINT_VIOLATION_COST = -10.0 / self.MAX_ACTION_ANGLE
+        # COSTS
+        self.MOVEMENT_COST = -0.5 / self.MAX_JOINT_ROTATION
+        self.FLAT_COST = -0.5
+        self.JOINT_LIMIT_VIOLATION_COST = -2.0 / self.MAX_JOINT_ROTATION
+        self.COLLISION_COST = -2.0 / self.MAX_JOINT_ROTATION
+        self.OVERSHOT_COST = -2.0 / self.MAX_JOINT_ROTATION
+        # REWARDS
+        self.TARGET_PROXIMITY_REWARD = 100.0
+        self.TARGET_REACHED_REWARD = 100.0
+
         self.action_space = gym.spaces.Box(-1.0, 1.0, (self.NUM_ARMS,), dtype=np.float32)
         self.observation_space = gym.spaces.Box(-1.0, 1.0, shape=(self.NUM_ARMS+2,), dtype=np.float32)
 
         self.viewer = None
         self.arm_polygons = None
         self.joint_angles = None
-        self.end_effect_position = None
+        self.end_effector_position = None
         self.target_position = None
         self.distance_to_target = None
 
@@ -53,10 +59,10 @@ class Arm2d(gym.Env):
         new_joint_angles = self.joint_angles + joint_inc
         v = np.zeros(self.NUM_ARMS)
         for i in range(self.NUM_ARMS):
-            if new_joint_angles[i] > self.JOINT_ROT_LIMIT:
-                v[i] = new_joint_angles[i] - self.JOINT_ROT_LIMIT
-            elif new_joint_angles[i] < -self.JOINT_ROT_LIMIT:
-                v[i] = new_joint_angles[i] + self.JOINT_ROT_LIMIT
+            if new_joint_angles[i] > self.JOINT_LIMIT:
+                v[i] = new_joint_angles[i] - self.JOINT_LIMIT
+            elif new_joint_angles[i] < -self.JOINT_LIMIT:
+                v[i] = new_joint_angles[i] + self.JOINT_LIMIT
         return v
 
     def _update_arm_polygons(self):
@@ -146,14 +152,14 @@ class Arm2d(gym.Env):
                 assert(False)
             assert(None not in points)
             self.arm_polygons[i] = Polygon(points)
-        self.end_effect_position = position
+        self.end_effector_position = position
 
     def _set_random_robot_position(self):
         collision = True
         counter = 0
         while collision:
             for i in range(self.NUM_ARMS):
-                self.joint_angles[i] = -self.JOINT_ROT_LIMIT + np.random.random() * self.JOINT_ROT_LIMIT * 2
+                self.joint_angles[i] = -self.JOINT_LIMIT + np.random.random() * self.JOINT_LIMIT * 2
                 # self.joint_angles[i] = -(self.JOINT_ROT_LIMIT/2) + np.random.random() * self.JOINT_ROT_LIMIT
             self._update_arm_polygons()
             collision = self._check_arm_collisions()
@@ -171,17 +177,20 @@ class Arm2d(gym.Env):
                     collision = True
         return collision
 
+    def _joint_limit_violated(self):
+        return np.max(np.abs(self.joint_angles)) > self.JOINT_LIMIT
+
     def _target_reached(self):
-        return np.max(np.abs(self.end_effect_position - self.target_position)) < self.TARGET_RADIUS
+        return np.max(np.abs(self.end_effector_position - self.target_position)) < self.TARGET_RADIUS
 
     def _get_distance_to_target(self):
-        return np.linalg.norm(self.end_effect_position - self.target_position)
+        return np.linalg.norm(self.end_effector_position - self.target_position)
 
     def _update_distance_to_target(self):
         self.distance_to_target = self._get_distance_to_target()
 
     def _get_state(self):
-        j = self.joint_angles / self.JOINT_ROT_LIMIT
+        j = self.joint_angles / self.JOINT_LIMIT
         p = self.target_position / (self.SCREEN_WIDTH / 2)
         return np.append(j, p)
 
@@ -191,7 +200,7 @@ class Arm2d(gym.Env):
     def reset(self, random_arm_pos=True, random_target_position=True):
         self.arm_polygons = [None] * self.NUM_ARMS
         self.joint_angles = np.zeros((self.NUM_ARMS,))
-        self.end_effect_position = [None, None]
+        self.end_effector_position = [None, None]
 
         if random_arm_pos:
             self._set_random_robot_position()
@@ -201,7 +210,7 @@ class Arm2d(gym.Env):
             while True:
                 self.target_position = np.random.rand(2) * self.SCREEN_WIDTH - self.SCREEN_WIDTH/2
                 distance_from_center = np.linalg.norm(self.target_position)
-                if distance_from_center < self.SCREEN_WIDTH/2:
+                if distance_from_center < self.SCREEN_WIDTH/2 and not self._target_reached():
                     break
         else:
             self.target_position = np.array([100, 100])
@@ -212,16 +221,21 @@ class Arm2d(gym.Env):
         return self._get_state()
 
     def step(self, action, continuous_render=True):
-        action = np.array(action) * self.MAX_ACTION_ANGLE
+        action = np.array(action) * self.MAX_JOINT_ROTATION
+        info = {'violations': []}
 
-        violation_vector = self._get_joint_violation_vector(action)
-        violation_norm = np.linalg.norm(violation_vector)
-        if violation_norm > 1e-9:
-            action -= violation_vector
-
+        # calculate joint limit violation
+        jlv_vec = self._get_joint_violation_vector(action)
+        jlv_norm = np.linalg.norm(jlv_vec)
+        # remove violation from action
+        if jlv_norm > 1e-9:
+            action -= jlv_vec
+        reward = 0
+        # calculate interpolation steps
         max_angle_inc = np.max(np.abs(action))
-        num_steps = int(np.ceil(max_angle_inc / self.INTERPOLATE_ANGLE_INC))
-        joint_inc = action / num_steps
+        num_steps = int(np.ceil(max_angle_inc / self.INTERPOLATE_INC))
+        if num_steps > 0:
+            joint_inc = action / num_steps
         for step in range(num_steps):
             self.joint_angles += joint_inc
             self._update_arm_polygons()
@@ -231,29 +245,40 @@ class Arm2d(gym.Env):
                 time.sleep(0.01)
 
             if self._check_arm_collisions():
-                state = self._get_state()
-                return state, -100, True, "self-collision"
+                # reverse collision
+                self.joint_angles -= joint_inc
+                self._update_arm_polygons()
+                reward += self.COLLISION_COST * np.linalg.norm(joint_inc * (num_steps - step))
+                break
+
+            if self._joint_limit_violated():
+                # reverse limit violation
+                self.joint_angles -= joint_inc
+                self._update_arm_polygons()
+                reward += self.JOINT_LIMIT_VIOLATION_COST * np.linalg.norm(joint_inc * (num_steps - step))
+                break
 
             if self._target_reached():
-                state = self._get_state()
-                return state, 100, True, "target reached"
+                # target reached reward
+                reward += self.TARGET_REACHED_REWARD
+                # proximity reward
+                distance_before = self.distance_to_target
+                self._update_distance_to_target()
+                reward += self.TARGET_PROXIMITY_REWARD * (
+                         distance_before - self.distance_to_target) / self.initial_distance_to_target
+                # overshot cost
+                reward += self.OVERSHOT_COST * np.linalg.norm(joint_inc * (num_steps - step - 1))
+                return self._get_state(), reward, True, "target reached"
 
-        state = self._get_state()
-
-        reward = 0
-
+        # proximity reward
         distance_before = self.distance_to_target
         self._update_distance_to_target()
         reward += self.TARGET_PROXIMITY_REWARD * (distance_before - self.distance_to_target) / self.initial_distance_to_target
-
+        # movement cost
         reward += sum(action) * self.MOVEMENT_COST
+        # step cost (flat cost)
         reward += self.FLAT_COST
-        if violation_norm > 1e-9:
-            reward += self.JOINT_VIOLATION_COST * violation_norm
-            if DEBUG:
-                print("Joint violation: {}".format(violation_vector))
-                print("Joint cost: {}".format(self.JOINT_VIOLATION_COST * violation_norm))
-        return state, reward, False, ""
+        return self._get_state(), reward, False, info
 
     def render(self, mode='human'):
         if self.viewer is None:
@@ -265,8 +290,8 @@ class Arm2d(gym.Env):
             points = [(x+self.SCREEN_WIDTH/2, y+self.SCREEN_HEIGHT/2) for x, y in zip(x_list, y_list)]
             self.viewer.draw_polygon(points, color=self.ARM_COLORS[i])
         # draw end effector
-        t = rendering.Transform(translation=(self.SCREEN_WIDTH/2 + self.end_effect_position[0],
-                                             self.SCREEN_HEIGHT/2 + self.end_effect_position[1]))
+        t = rendering.Transform(translation=(self.SCREEN_WIDTH/2 + self.end_effector_position[0],
+                                             self.SCREEN_HEIGHT/2 + self.end_effector_position[1]))
         self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.END_EFFECTOR_COLOR).add_attr(t)
         # draw base
         t = rendering.Transform(translation=(self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2))
