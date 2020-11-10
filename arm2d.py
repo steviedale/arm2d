@@ -198,11 +198,11 @@ class Arm2d(gym.Env):
         np.random.seed(seed)
 
     def reset(self, random_arm_position=True, random_target_position=True, arm_start_position=None,
-              target_start_position=None):
+              target_position=None):
         # ensure parameters are contradictory
         if random_arm_position and arm_start_position:
             raise Exception("random_arm_position and arm_start_position are mutually exclusive")
-        if random_target_position and target_start_position:
+        if random_target_position and target_position:
             raise Exception("random_target_position and target_start_position are mutually exclusive")
 
         self.arm_polygons = [None] * self.NUM_ARMS
@@ -218,8 +218,8 @@ class Arm2d(gym.Env):
 
         self._update_arm_polygons()
 
-        if target_start_position:
-            self.target_position = target_start_position
+        if target_position:
+            self.target_position = target_position
 
         if random_target_position:
             while True:
