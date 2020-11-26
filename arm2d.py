@@ -22,7 +22,7 @@ class Arm2d(gym.Env):
         self.INTERPOLATE_INC = (1 / 100) * np.pi
         self.MAX_JOINT_ROTATION = (1 / 10) * np.pi
         self.CIRCLE_RADIUS = 5
-        self.TARGET_RADIUS = 30
+        self.TARGET_RADIUS = 10
         # COLORS
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
