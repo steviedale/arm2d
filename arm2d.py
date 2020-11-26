@@ -11,7 +11,7 @@ DEBUG = False
 
 class Arm2d(gym.Env):
 
-    def __init__(self):
+    def __init__(self, has_obstacles=True):
         # MEASUREMENTS
         self.SCREEN_WIDTH = 600
         self.SCREEN_HEIGHT = self.SCREEN_WIDTH
@@ -35,15 +35,18 @@ class Arm2d(gym.Env):
             (1, 0, 1),
             (1, 1, 0)
         ]
+        max_norm = np.linalg.norm(np.ones(self.NUM_ARMS)*self.MAX_JOINT_ROTATION)
         # COSTS
-        self.MOVEMENT_COST = -0.5 / self.MAX_JOINT_ROTATION
-        self.FLAT_COST = -0.5
-        self.JOINT_LIMIT_VIOLATION_COST = -2.0 / self.MAX_JOINT_ROTATION
-        self.COLLISION_COST = -2.0 / self.MAX_JOINT_ROTATION
-        self.OVERSHOT_COST = -2.0 / self.MAX_JOINT_ROTATION
+        self.MOVEMENT_COST = -1.0 / max_norm
+        self.FLAT_COST = -1.0
+        self.JOINT_LIMIT_VIOLATION_COST = -2.0 / max_norm
+        self.COLLISION_COST = -2.0 / max_norm
+        self.OVERSHOT_COST = -50.0 / max_norm
         # REWARDS
         self.TARGET_PROXIMITY_REWARD = 100.0
-        self.TARGET_REACHED_REWARD = 100.0
+        self.TARGET_REACHED_REWARD = 500.0
+
+        self.has_obstacles = has_obstacles
 
         self.action_space = gym.spaces.Box(-1.0, 1.0, (self.NUM_ARMS,), dtype=np.float32)
         self.observation_space = gym.spaces.Box(-1.0, 1.0, shape=(self.NUM_ARMS+2,), dtype=np.float32)
