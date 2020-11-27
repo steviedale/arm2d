@@ -37,11 +37,11 @@ class Arm2d(gym.Env):
         ]
         max_norm = np.linalg.norm(np.ones(self.NUM_ARMS)*self.MAX_JOINT_ROTATION)
         # COSTS
-        self.MOVEMENT_COST = -1.0 / max_norm
+        self.MOVEMENT_COST = -5.0 / max_norm
         self.FLAT_COST = -1.0
         self.JOINT_LIMIT_VIOLATION_COST = -2.0 / max_norm
         self.COLLISION_COST = -2.0 / max_norm
-        self.OVERSHOT_COST = -50.0 / max_norm
+        self.OVERSHOT_COST = -100.0 / max_norm
         # REWARDS
         self.TARGET_PROXIMITY_REWARD = 100.0
         self.TARGET_REACHED_REWARD = 500.0
