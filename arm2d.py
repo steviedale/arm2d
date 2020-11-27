@@ -24,7 +24,8 @@ class Arm2d(gym.Env):
         self.CIRCLE_RADIUS = 5
         self.TARGET_RADIUS = 10
         # CONSTRAINTS
-        self.MAX_CENTER_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 4
+        self.MIN_CENTER_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 8
+        self.MAX_CENTER_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 2
         self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 4
         # COLORS
         self.BASE_COLOR = (0, 0, 0)
@@ -258,7 +259,7 @@ class Arm2d(gym.Env):
                 distance_from_center = np.linalg.norm(self.target_position)
                 distance_from_end_effector = np.linalg.norm(self.target_position - self.end_effector_position)
                 if (
-                        distance_from_center < self.MAX_CENTER_TO_TARGET_DISTANCE and
+                        self.MIN_CENTER_TO_TARGET_DISTANCE < distance_from_center < self.MAX_CENTER_TO_TARGET_DISTANCE and
                         distance_from_end_effector < self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE and
                         not self._target_reached()
                 ):
