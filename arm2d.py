@@ -15,7 +15,7 @@ class Arm2d(gym.Env):
         # MEASUREMENTS
         self.SCREEN_WIDTH = 600
         self.SCREEN_HEIGHT = self.SCREEN_WIDTH
-        self.NUM_ARMS = 4
+        self.NUM_ARMS = 6
         self.ARM_LENGTH = (self.SCREEN_HEIGHT/2) / self.NUM_ARMS
         self.ARM_WIDTH = self.ARM_LENGTH / 10
         self.JOINT_LIMIT = (7 / 8) * np.pi
@@ -24,29 +24,32 @@ class Arm2d(gym.Env):
         self.CIRCLE_RADIUS = 5
         self.TARGET_RADIUS = 10
         # CONSTRAINTS
-        self.MAX_DISTANCE_TO_TARGET = self.SCREEN_WIDTH / 4
+        self.MAX_CENTER_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 4
+        self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 4
         # COLORS
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
         self.TARGET_COLOR = (0, 0.8, 0)
         self.ARM_COLORS = [
-            (0, 0, 1),
-            # (0, 1, 0),
-            (0, 1, 1),
-            (1, 0, 0),
-            (1, 0, 1),
-            (1, 1, 0)
+            (255 / 255, 51 / 255, 51 / 255),    # red
+            (255 / 255, 255 / 255, 51 / 255),   # yellow
+            (255 / 255, 51 / 255, 255 / 255),   # pink
+            (0 / 255, 204 / 255, 0 / 255),     # green
+            (0 / 255, 128 / 255, 255 / 255),    # purple
+            (255 / 255, 128 / 255, 0 / 255),    # orange
+            (0 / 255, 0 / 255, 255 / 255),      # blue
+            (0 / 255, 255 / 255, 128 / 255),    # teal
         ]
         max_norm = np.linalg.norm(np.ones(self.NUM_ARMS)*self.MAX_JOINT_ROTATION)
         # COSTS
-        self.MOVEMENT_COST = -5.0 / max_norm
-        self.FLAT_COST = -1.0
+        self.MOVEMENT_COST = -0.5 / max_norm
+        self.FLAT_COST = -0.1
         self.JOINT_LIMIT_VIOLATION_COST = -2.0 / max_norm
         self.COLLISION_COST = -2.0 / max_norm
         self.OVERSHOT_COST = -100.0 / max_norm
-        self.LINEAR_DEVIATION_COST = -10.0 / self.SCREEN_WIDTH
+        self.LINEAR_DEVIATION_COST = -0.1 / self.SCREEN_WIDTH
         # REWARDS
-        self.TARGET_PROXIMITY_REWARD = 100.0
+        self.TARGET_PROXIMITY_REWARD = 500.0
         self.TARGET_REACHED_REWARD = 500.0
 
         self.has_obstacles = has_obstacles
@@ -255,8 +258,8 @@ class Arm2d(gym.Env):
                 distance_from_center = np.linalg.norm(self.target_position)
                 distance_from_end_effector = np.linalg.norm(self.target_position - self.end_effector_position)
                 if (
-                        distance_from_center < self.SCREEN_WIDTH/2 and
-                        distance_from_end_effector < self.MAX_DISTANCE_TO_TARGET and
+                        distance_from_center < self.MAX_CENTER_TO_TARGET_DISTANCE and
+                        distance_from_end_effector < self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE and
                         not self._target_reached()
                 ):
                     break
