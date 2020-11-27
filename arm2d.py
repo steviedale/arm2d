@@ -162,12 +162,18 @@ class Arm2d(gym.Env):
     def _set_random_robot_position(self):
         collision = True
         counter = 0
-        while collision:
+        while True:
             for i in range(self.NUM_ARMS):
                 self.joint_angles[i] = -self.JOINT_LIMIT + np.random.random() * self.JOINT_LIMIT * 2
                 # self.joint_angles[i] = -(self.JOINT_ROT_LIMIT/2) + np.random.random() * self.JOINT_ROT_LIMIT
             self._update_arm_pose()
             collision = self._check_arm_collisions()
+            dist_to_end_effector = np.linalg.norm(self.end_effector_position)
+            if (
+                not collision
+                and self.MIN_CENTER_TO_TARGET_DISTANCE < dist_to_end_effector < self.MAX_CENTER_TO_TARGET_DISTANCE
+            ):
+                break
             counter += 1
         if DEBUG:
             print("_set_random_robot_position took {} attempts".format(counter))
