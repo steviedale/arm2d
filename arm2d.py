@@ -26,6 +26,7 @@ class Arm2d(gym.Env):
         # CONSTRAINTS
         self.MIN_CENTER_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 8
         self.MAX_CENTER_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 2
+        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 8
         self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 4
         # COLORS
         self.BASE_COLOR = (0, 0, 0)
@@ -48,7 +49,7 @@ class Arm2d(gym.Env):
         self.JOINT_LIMIT_VIOLATION_COST = -2.0 / max_norm
         self.COLLISION_COST = -2.0 / max_norm
         self.OVERSHOT_COST = -100.0 / max_norm
-        self.LINEAR_DEVIATION_COST = -0.1 / self.SCREEN_WIDTH
+        self.LINEAR_DEVIATION_COST = -1.0 / self.SCREEN_WIDTH
         # REWARDS
         self.TARGET_PROXIMITY_REWARD = 500.0
         self.TARGET_REACHED_REWARD = 500.0
@@ -260,7 +261,7 @@ class Arm2d(gym.Env):
                 distance_from_end_effector = np.linalg.norm(self.target_position - self.end_effector_position)
                 if (
                         self.MIN_CENTER_TO_TARGET_DISTANCE < distance_from_center < self.MAX_CENTER_TO_TARGET_DISTANCE and
-                        distance_from_end_effector < self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE and
+                        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE < distance_from_end_effector < self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE and
                         not self._target_reached()
                 ):
                     break
