@@ -31,7 +31,7 @@ class Arm2d(gym.Env):
         self.TARGET_COLOR = (0, 0.8, 0)
         self.ARM_COLORS = [
             (0, 0, 1),
-            (0, 1, 0),
+            # (0, 1, 0),
             (0, 1, 1),
             (1, 0, 0),
             (1, 0, 1),
@@ -44,7 +44,7 @@ class Arm2d(gym.Env):
         self.JOINT_LIMIT_VIOLATION_COST = -2.0 / max_norm
         self.COLLISION_COST = -2.0 / max_norm
         self.OVERSHOT_COST = -100.0 / max_norm
-        self.LINEAR_DEVIATION_COST = -5.0 / self.SCREEN_WIDTH
+        self.LINEAR_DEVIATION_COST = -10.0 / self.SCREEN_WIDTH
         # REWARDS
         self.TARGET_PROXIMITY_REWARD = 100.0
         self.TARGET_REACHED_REWARD = 500.0
@@ -196,19 +196,28 @@ class Arm2d(gym.Env):
         return np.append(np.append(joint_angles, start_position), target_position)
 
     def _get_distance_from_line(self):
-        m1 = self.target_position[1] - self.start_position[1] / self.target_position[0] - self.start_position[0]
-        # b = y - mx
-        b1 = self.target_position[1] - m1 * self.target_position[0]
-        m2 = -1/m1
-        # b = y - mx
-        b2 = self.end_effector_position[1] - m2 * self.end_effector_position[0]
-        # m1 * x + b1 = m2 * x + b2
-        # m1 * x - m2 * x = b2 - b1
-        # (m1 - m2) * x = b2 - b1
-        x = (b2 - b1) / (m1 - m2)
-        y = m1 * x + b1
-        p = np.array([x, y])
-        return np.linalg.norm(self.end_effector_position - p)
+        rise = self.target_position[1] - self.start_position[1]
+        run = self.target_position[0] - self.start_position[0]
+        # vertical target trajectory
+        if run == 0:
+            return np.abs(self.end_effector_position[0] - self.target_position[0])
+        # horizontal target trajectory
+        elif rise == 0:
+            return np.abs(self.end_effector_position[1] - self.target_position[1])
+        else:
+            m1 = rise/run
+            # b = y - mx
+            b1 = self.target_position[1] - m1 * self.target_position[0]
+            m2 = -1/m1
+            # b = y - mx
+            b2 = self.end_effector_position[1] - m2 * self.end_effector_position[0]
+            # m1 * x + b1 = m2 * x + b2
+            # m1 * x - m2 * x = b2 - b1
+            # (m1 - m2) * x = b2 - b1
+            x = (b2 - b1) / (m1 - m2)
+            y = m1 * x + b1
+            p = np.array([x, y])
+            return np.linalg.norm(self.end_effector_position - p)
 
     def seed(self, seed):
         np.random.seed(seed)
@@ -235,6 +244,7 @@ class Arm2d(gym.Env):
 
         self._update_arm_pose()
         self.start_position = self.end_effector_position
+        self.end_effector_position_record.append(self.start_position)
 
         if target_position is not None:
             self.target_position = target_position
@@ -343,19 +353,17 @@ class Arm2d(gym.Env):
                 (self.SCREEN_WIDTH/2 + self.start_position[0], self.SCREEN_WIDTH/2 + self.start_position[1]),
                 (self.SCREEN_WIDTH/2 + self.target_position[0], self.SCREEN_WIDTH/2 + self.target_position[1]),
             ),
-            linewidth=10
+            linewidth=5,
+            color = (0.7, 0.7, 0.7)
         )
         # draw trajectory
         path = [(self.SCREEN_WIDTH/2 + p[0], self.SCREEN_WIDTH/2 + p[1]) for p in self.end_effector_position_record]
         self.viewer.draw_polyline(
             path,
-            linewidth=10,
+            linewidth=5,
             color=(0, 1, 0)
         )
         return self.viewer.render(return_rgb_array='rgb_array')
-
-    def seed(self, seed):
-        np.random.seed(seed)
 
 
 if __name__ == '__main__':
@@ -367,7 +375,7 @@ if __name__ == '__main__':
     while not done:
         inc = np.pi/8
         # next_state, reward, done, info = agent.step([-inc, -inc, -inc, -inc, -inc, -inc])
-        next_state, reward, done, info = agent.step([inc, 0, 0, 0, 0, 0], render=True)
+        next_state, reward, done, info = agent.step([inc, 0, 0, 0, 0, 0])
         agent.render()
         # time.sleep(0.1)
     end_time = time.time()
