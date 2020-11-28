@@ -49,7 +49,7 @@ class Arm2d(gym.Env):
         self.JOINT_LIMIT_VIOLATION_COST = -2.0 / max_norm
         self.COLLISION_COST = -2.0 / max_norm
         self.OVERSHOT_COST = -100.0 / max_norm
-        self.LINEAR_DEVIATION_COST = -1.0 / self.SCREEN_WIDTH
+        self.LINEAR_DEVIATION_COST = -10.0 / self.SCREEN_WIDTH
         self.STRICT_COLLISION_COST = -250.0
         self.STRICT_JOINT_LIMIT_COST = -250.0
         # REWARDS
@@ -286,8 +286,7 @@ class Arm2d(gym.Env):
 
     def step(self, action, continuous_render=True):
         action = np.array(action) * self.MAX_JOINT_ROTATION
-        info = {'violations': [], 'target_reached': False}
-
+        info = {'violations': [], 'target_reached': False, 'linear_deviation_cost': 0}
         reward = 0
         # calculate interpolation steps
         max_angle_inc = np.max(np.abs(action))
@@ -340,6 +339,7 @@ class Arm2d(gym.Env):
                 # add cost of linear deviation
                 dist = self._get_distance_from_line()
                 reward += self.LINEAR_DEVIATION_COST * dist
+                info['linear_deviation_cost'] += self.LINEAR_DEVIATION_COST * dist
                 self.end_effector_position_record.append(self.end_effector_position)
 
         # proximity reward
