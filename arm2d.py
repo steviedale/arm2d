@@ -24,10 +24,10 @@ class Arm2d(gym.Env):
         self.CIRCLE_RADIUS = 5
         self.TARGET_RADIUS = 10
         # CONSTRAINTS
-        self.MIN_CENTER_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 8
-        self.MAX_CENTER_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 2
-        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 8
-        self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = self.SCREEN_WIDTH / 4
+        self.MIN_CENTER_TO_TARGET_DISTANCE = (1/8) * self.SCREEN_WIDTH
+        self.MAX_CENTER_TO_TARGET_DISTANCE = (3/8) * self.SCREEN_WIDTH
+        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE = (1/8) * self.SCREEN_WIDTH
+        self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = (1/4) * self.SCREEN_WIDTH
         # COLORS
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
@@ -50,6 +50,8 @@ class Arm2d(gym.Env):
         self.COLLISION_COST = -2.0 / max_norm
         self.OVERSHOT_COST = -100.0 / max_norm
         self.LINEAR_DEVIATION_COST = -1.0 / self.SCREEN_WIDTH
+        self.STRICT_COLLISION_COST = -250.0
+        self.STRICT_JOINT_LIMIT_COST = -250.0
         # REWARDS
         self.TARGET_PROXIMITY_REWARD = 500.0
         self.TARGET_REACHED_REWARD = 500.0
@@ -68,6 +70,8 @@ class Arm2d(gym.Env):
         self.distance_to_target = None
         self.initial_distance_to_target = None
         self.start_position = None
+        self.relax_joint_limits = None
+        self.relax_collisions = None
 
     def _update_arm_pose(self):
         angle = 0
@@ -160,7 +164,6 @@ class Arm2d(gym.Env):
         self.end_effector_position = position
 
     def _set_random_robot_position(self):
-        collision = True
         counter = 0
         while True:
             for i in range(self.NUM_ARMS):
@@ -172,6 +175,8 @@ class Arm2d(gym.Env):
             if (
                 not collision
                 and self.MIN_CENTER_TO_TARGET_DISTANCE < dist_to_end_effector < self.MAX_CENTER_TO_TARGET_DISTANCE
+                # TODO: remove this
+                and self.end_effector_position[0] > 0 and self.end_effector_position[1] > 0
             ):
                 break
             counter += 1
@@ -234,7 +239,7 @@ class Arm2d(gym.Env):
         np.random.seed(seed)
 
     def reset(self, random_arm_position=True, random_target_position=True, arm_start_position=None,
-              target_position=None):
+              target_position=None, relax_joint_limits=False, relax_collisions=False):
         # ensure parameters are contradictory
         if random_arm_position and arm_start_position:
             raise Exception("random_arm_position and arm_start_position are mutually exclusive")
@@ -246,6 +251,8 @@ class Arm2d(gym.Env):
         self.joint_angles = np.zeros(self.NUM_ARMS)
         self.end_effector_position = np.zeros(2)
         self.target_position = np.ones(2) * 100.0
+        self.relax_joint_limits = relax_joint_limits
+        self.relax_collisions = relax_collisions
 
         if arm_start_position is not None:
             self.joint_angles = arm_start_position
@@ -279,7 +286,7 @@ class Arm2d(gym.Env):
 
     def step(self, action, continuous_render=True):
         action = np.array(action) * self.MAX_JOINT_ROTATION
-        info = {'violations': []}
+        info = {'violations': [], 'target_reached': False}
 
         reward = 0
         # calculate interpolation steps
@@ -296,20 +303,26 @@ class Arm2d(gym.Env):
                     time.sleep(0.01)
 
                 if self._check_arm_collisions():
-                    # reverse collision
-                    self.joint_angles -= joint_inc
-                    self._update_arm_pose()
-                    reward += self.COLLISION_COST * np.linalg.norm(joint_inc * (num_steps - step))
                     info['violations'].append('arm_self_collision')
-                    break
+                    if self.relax_collisions:
+                        # reverse collision
+                        self.joint_angles -= joint_inc
+                        self._update_arm_pose()
+                        reward += self.COLLISION_COST * np.linalg.norm(joint_inc * (num_steps - step))
+                        break
+                    else:
+                        return self._get_state(), self.STRICT_COLLISION_COST, True, info
 
                 if self._joint_limit_violated():
-                    # reverse limit violation
-                    self.joint_angles -= joint_inc
-                    self._update_arm_pose()
-                    reward += self.JOINT_LIMIT_VIOLATION_COST * np.linalg.norm(joint_inc * (num_steps - step))
                     info['violations'].append('joint_limit_violation')
-                    break
+                    if self.relax_joint_limits:
+                        # reverse limit violation
+                        self.joint_angles -= joint_inc
+                        self._update_arm_pose()
+                        reward += self.JOINT_LIMIT_VIOLATION_COST * np.linalg.norm(joint_inc * (num_steps - step))
+                        break
+                    else:
+                        return self._get_state(), self.STRICT_JOINT_LIMIT_COST, True, info
 
                 if self._target_reached():
                     # target reached reward
@@ -321,7 +334,8 @@ class Arm2d(gym.Env):
                              distance_before - self.distance_to_target) / self.initial_distance_to_target
                     # overshot cost
                     reward += self.OVERSHOT_COST * np.linalg.norm(joint_inc * (num_steps - step - 1))
-                    return self._get_state(), reward, True, "target reached"
+                    info['target_reached'] = True
+                    return self._get_state(), reward, True, info
 
                 # add cost of linear deviation
                 dist = self._get_distance_from_line()
@@ -365,7 +379,7 @@ class Arm2d(gym.Env):
                 (self.SCREEN_WIDTH/2 + self.target_position[0], self.SCREEN_WIDTH/2 + self.target_position[1]),
             ),
             linewidth=5,
-            color = (0.7, 0.7, 0.7)
+            color=(0.7, 0.7, 0.7)
         )
         # draw trajectory
         path = [(self.SCREEN_WIDTH/2 + p[0], self.SCREEN_WIDTH/2 + p[1]) for p in self.end_effector_position_record]
