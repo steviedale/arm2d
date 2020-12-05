@@ -1,9 +1,9 @@
 import numpy as np
-
 import gym
 from gym.envs.classic_control import rendering
 from shapely.geometry import Polygon
 import time
+import ccd_ik
 
 
 DEBUG = False
@@ -20,14 +20,16 @@ class Arm2d(gym.Env):
         self.ARM_WIDTH = self.ARM_LENGTH / 10
         self.JOINT_LIMIT = (7 / 8) * np.pi
         self.INTERPOLATE_INC = (1 / 100) * np.pi
-        self.MAX_JOINT_ROTATION = (1 / 10) * np.pi
         self.CIRCLE_RADIUS = 5
         self.TARGET_RADIUS = 10
         # CONSTRAINTS
-        self.MIN_CENTER_TO_TARGET_DISTANCE = (1/8) * self.SCREEN_WIDTH
+        self.MIN_CENTER_TO_TARGET_DISTANCE = (1/4) * self.SCREEN_WIDTH
         self.MAX_CENTER_TO_TARGET_DISTANCE = (3/8) * self.SCREEN_WIDTH
-        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE = (1/8) * self.SCREEN_WIDTH
-        self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = (1/4) * self.SCREEN_WIDTH
+        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE = (1/16) * self.SCREEN_WIDTH
+        self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = (1/8) * self.SCREEN_WIDTH
+        self.MAX_LINEAR_DEVIATION = (1/10) * self.SCREEN_WIDTH
+        # self.MAX_LINEAR_DEVIATION = (1/25) * self.SCREEN_WIDTH
+        self.MAX_JOINT_ROTATION = (1/10) * np.pi
         # COLORS
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
@@ -44,12 +46,13 @@ class Arm2d(gym.Env):
         ]
         max_norm = np.linalg.norm(np.ones(self.NUM_ARMS)*self.MAX_JOINT_ROTATION)
         # COSTS
-        self.MOVEMENT_COST = -0.5 / max_norm
-        self.FLAT_COST = -0.1
+        self.MOVEMENT_COST = -0.005 / max_norm
+        self.FLAT_COST = -0.0001
         self.JOINT_LIMIT_VIOLATION_COST = -2.0 / max_norm
         self.COLLISION_COST = -2.0 / max_norm
         self.OVERSHOT_COST = -100.0 / max_norm
-        self.LINEAR_DEVIATION_COST = -10.0 / self.SCREEN_WIDTH
+        self.LINEAR_DEVIATION_COST = -50.0 / self.SCREEN_WIDTH
+        self.LINEAR_DEVIATION_VIOLATION_COST = -250.0
         self.STRICT_COLLISION_COST = -250.0
         self.STRICT_JOINT_LIMIT_COST = -250.0
         # REWARDS
@@ -68,10 +71,12 @@ class Arm2d(gym.Env):
         self.end_effector_position_record = None
         self.target_position = None
         self.distance_to_target = None
+        self.linear_deviation = None
         self.initial_distance_to_target = None
         self.start_position = None
         self.relax_joint_limits = None
         self.relax_collisions = None
+        self.ldv_bound_shift = None
 
     def _update_arm_pose(self):
         angle = 0
@@ -165,9 +170,10 @@ class Arm2d(gym.Env):
 
     def _set_random_robot_position(self):
         counter = 0
+        safe_joint_limit = (4/5) * self.JOINT_LIMIT
         while True:
             for i in range(self.NUM_ARMS):
-                self.joint_angles[i] = -self.JOINT_LIMIT + np.random.random() * self.JOINT_LIMIT * 2
+                self.joint_angles[i] = -safe_joint_limit + np.random.random() * safe_joint_limit * 2
                 # self.joint_angles[i] = -(self.JOINT_ROT_LIMIT/2) + np.random.random() * self.JOINT_ROT_LIMIT
             self._update_arm_pose()
             collision = self._check_arm_collisions()
@@ -253,6 +259,7 @@ class Arm2d(gym.Env):
         self.target_position = np.ones(2) * 100.0
         self.relax_joint_limits = relax_joint_limits
         self.relax_collisions = relax_collisions
+        self.linear_deviation = 0
 
         if arm_start_position is not None:
             self.joint_angles = arm_start_position
@@ -281,6 +288,12 @@ class Arm2d(gym.Env):
 
         self._update_distance_to_target()
         self.initial_distance_to_target = self._get_distance_to_target()
+
+        m = (self.target_position[1] - self.end_effector_position[1]) / (self.target_position[0] - self.end_effector_position[0])
+        m_perp = -1/m
+        norm = np.linalg.norm([1, m_perp])
+        scale = self.MAX_LINEAR_DEVIATION / norm
+        self.ldv_bound_shift = np.array([scale, scale * m_perp])
 
         return self._get_state()
 
@@ -332,14 +345,19 @@ class Arm2d(gym.Env):
                     reward += self.TARGET_PROXIMITY_REWARD * (
                              distance_before - self.distance_to_target) / self.initial_distance_to_target
                     # overshot cost
-                    reward += self.OVERSHOT_COST * np.linalg.norm(joint_inc * (num_steps - step - 1))
+                    # reward += self.OVERSHOT_COST * np.linalg.norm(joint_inc * (num_steps - step - 1))
                     info['target_reached'] = True
                     return self._get_state(), reward, True, info
 
                 # add cost of linear deviation
                 dist = self._get_distance_from_line()
-                reward += self.LINEAR_DEVIATION_COST * dist
-                info['linear_deviation_cost'] += self.LINEAR_DEVIATION_COST * dist
+                if dist > self.MAX_LINEAR_DEVIATION:
+                    info['violations'].append('linear_deviation_violation')
+                    return self._get_state(), self.LINEAR_DEVIATION_VIOLATION_COST, True, info
+                ldc = self.LINEAR_DEVIATION_COST * (dist - self.linear_deviation)
+                self.linear_deviation = dist
+                reward += ldc
+                info['linear_deviation_cost'] += ldc
                 self.end_effector_position_record.append(self.end_effector_position)
 
         # proximity reward
@@ -347,12 +365,15 @@ class Arm2d(gym.Env):
         self._update_distance_to_target()
         reward += self.TARGET_PROXIMITY_REWARD * (distance_before - self.distance_to_target) / self.initial_distance_to_target
         # movement cost
-        reward += sum(action) * self.MOVEMENT_COST
+        # reward += sum(action) * self.MOVEMENT_COST
         # step cost (flat cost)
-        reward += self.FLAT_COST
+        # reward += self.FLAT_COST
         return self._get_state(), reward, False, info
 
     def render(self, mode='human'):
+        start_position = self.start_position + self.SCREEN_WIDTH/2
+        target_position = self.target_position + self.SCREEN_WIDTH/2
+        end_effector_position = self.end_effector_position + self.SCREEN_WIDTH/2
         if self.viewer is None:
             self.viewer = rendering.Viewer(self.SCREEN_WIDTH, self.SCREEN_HEIGHT)
             self.viewer.set_bounds(0, self.SCREEN_WIDTH, 0, self.SCREEN_HEIGHT)
@@ -362,25 +383,33 @@ class Arm2d(gym.Env):
             points = [(x+self.SCREEN_WIDTH/2, y+self.SCREEN_HEIGHT/2) for x, y in zip(x_list, y_list)]
             self.viewer.draw_polygon(points, color=self.ARM_COLORS[i])
         # draw end effector
-        t = rendering.Transform(translation=(self.SCREEN_WIDTH/2 + self.end_effector_position[0],
-                                             self.SCREEN_HEIGHT/2 + self.end_effector_position[1]))
+        t = rendering.Transform(translation=end_effector_position)
         self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.END_EFFECTOR_COLOR).add_attr(t)
         # draw base
         t = rendering.Transform(translation=(self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2))
         self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.BASE_COLOR).add_attr(t)
         # draw target
-        t = rendering.Transform(translation=(self.SCREEN_WIDTH/2 + self.target_position[0],
-                                             self.SCREEN_HEIGHT/2 + self.target_position[1]))
+        t = rendering.Transform(translation=target_position)
         self.viewer.draw_circle(self.TARGET_RADIUS, color=self.TARGET_COLOR).add_attr(t)
         # draw target path
         self.viewer.draw_polyline(
             (
-                (self.SCREEN_WIDTH/2 + self.start_position[0], self.SCREEN_WIDTH/2 + self.start_position[1]),
-                (self.SCREEN_WIDTH/2 + self.target_position[0], self.SCREEN_WIDTH/2 + self.target_position[1]),
+                start_position,
+                target_position,
             ),
             linewidth=5,
             color=(0.7, 0.7, 0.7)
         )
+        # draw linear deviation bounds
+        for shift in (self.ldv_bound_shift, -self.ldv_bound_shift):
+            self.viewer.draw_polyline(
+                (
+                    start_position + shift,
+                    target_position + shift,
+                ),
+                linewidth=5,
+                color=(0.7, 0.7, 0.7)
+            )
         # draw trajectory
         path = [(self.SCREEN_WIDTH/2 + p[0], self.SCREEN_WIDTH/2 + p[1]) for p in self.end_effector_position_record]
         self.viewer.draw_polyline(
@@ -393,15 +422,3 @@ class Arm2d(gym.Env):
 
 if __name__ == '__main__':
     agent = Arm2d()
-    agent.reset(random_arm_position=False)
-    agent.render()
-    done = False
-    start_time = time.time()
-    while not done:
-        inc = np.pi/8
-        # next_state, reward, done, info = agent.step([-inc, -inc, -inc, -inc, -inc, -inc])
-        next_state, reward, done, info = agent.step([inc, 0, 0, 0, 0, 0])
-        agent.render()
-        # time.sleep(0.1)
-    end_time = time.time()
-    print("duration: {}".format(round(end_time - start_time, 2)))
