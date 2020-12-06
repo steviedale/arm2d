@@ -18,18 +18,21 @@ class Arm2d(gym.Env):
         self.NUM_ARMS = 6
         self.ARM_LENGTH = (self.SCREEN_HEIGHT/2) / self.NUM_ARMS
         self.ARM_WIDTH = self.ARM_LENGTH / 10
-        self.JOINT_LIMIT = (7 / 8) * np.pi
         self.INTERPOLATE_INC = (1 / 100) * np.pi
         self.CIRCLE_RADIUS = 5
         self.TARGET_RADIUS = 10
+        self.RELAX_JOINT_LIMITS = None
+        self.RELAX_COLLISIONS = None
         # CONSTRAINTS
         self.MIN_CENTER_TO_TARGET_DISTANCE = (1/4) * self.SCREEN_WIDTH
         self.MAX_CENTER_TO_TARGET_DISTANCE = (3/8) * self.SCREEN_WIDTH
         self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE = (1/16) * self.SCREEN_WIDTH
         self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = (1/8) * self.SCREEN_WIDTH
-        self.MAX_LINEAR_DEVIATION = (1/10) * self.SCREEN_WIDTH
+        self.MAX_LINEAR_DEVIATION = (1/25) * self.SCREEN_WIDTH
+        self.JOINT_LIMIT = (7 / 8) * np.pi
+        self.BATCH_SIZE = 100
         # self.MAX_LINEAR_DEVIATION = (1/25) * self.SCREEN_WIDTH
-        self.MAX_JOINT_ROTATION = (1/10) * np.pi
+        self.MAX_JOINT_ROTATION = (1/50) * np.pi
         # COLORS
         self.BASE_COLOR = (0, 0, 0)
         self.END_EFFECTOR_COLOR = (0, 0, 0)
@@ -74,9 +77,44 @@ class Arm2d(gym.Env):
         self.linear_deviation = None
         self.initial_distance_to_target = None
         self.start_position = None
-        self.relax_joint_limits = None
-        self.relax_collisions = None
         self.ldv_bound_shift = None
+        self.max_linear_deviation = None
+        self.batch = None
+        self.batch_index = None
+        self.batch_rounds = None
+    
+    def new_batch(self):
+        self.batch = []
+        self.batch_index = 0
+        self.batch_rounds = 0
+        for i in range(self.BATCH_SIZE):
+            self.arm_polygons = [None] * self.NUM_ARMS
+            self.joint_angles = np.zeros(self.NUM_ARMS)
+            self.end_effector_position = np.zeros(2)
+            self.target_position = np.ones(2) * 100.0
+            
+            self._set_random_robot_position()
+
+            self._update_arm_pose()
+            self.start_position = self.end_effector_position
+
+            while True:
+                self.target_position = np.random.rand(2) * self.SCREEN_WIDTH - self.SCREEN_WIDTH/2
+                distance_from_center = np.linalg.norm(self.target_position)
+                distance_from_end_effector = np.linalg.norm(self.target_position - self.end_effector_position)
+                if (
+                        self.MIN_CENTER_TO_TARGET_DISTANCE < distance_from_center < self.MAX_CENTER_TO_TARGET_DISTANCE and
+                        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE < distance_from_end_effector < self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE and
+                        not self._target_reached()
+                ):
+                    break
+            
+            self.batch.append({
+                'start_position': np.copy(self.start_position),
+                'target_position': np.copy(self.target_position),
+                'end_effector_position': np.copy(self.end_effector_position),
+                'joint_angles': np.copy(self.joint_angles)
+            })
 
     def _update_arm_pose(self):
         angle = 0
@@ -244,51 +282,29 @@ class Arm2d(gym.Env):
     def seed(self, seed):
         np.random.seed(seed)
 
-    def reset(self, random_arm_position=True, random_target_position=True, arm_start_position=None,
-              target_position=None, relax_joint_limits=False, relax_collisions=False):
-        # ensure parameters are contradictory
-        if random_arm_position and arm_start_position:
-            raise Exception("random_arm_position and arm_start_position are mutually exclusive")
-        if random_target_position and target_position:
-            raise Exception("random_target_position and target_start_position are mutually exclusive")
-
+    def reset(self):
         self.end_effector_position_record = []
-        self.arm_polygons = [None] * self.NUM_ARMS
-        self.joint_angles = np.zeros(self.NUM_ARMS)
-        self.end_effector_position = np.zeros(2)
-        self.target_position = np.ones(2) * 100.0
-        self.relax_joint_limits = relax_joint_limits
-        self.relax_collisions = relax_collisions
         self.linear_deviation = 0
-
-        if arm_start_position is not None:
-            self.joint_angles = arm_start_position
-
-        if random_arm_position:
-            self._set_random_robot_position()
-
+        self.max_linear_deviation = 0
+        
+        if self.batch_index == self.BATCH_SIZE:
+            self.batch_index = 0
+            self.batch_rounds += 1
+        
+        config = self.batch[self.batch_index]
+        self.start_position = np.copy(config['start_position'])
+        self.target_position = np.copy(config['target_position'])
+        self.end_effector_position = np.copy(config['end_effector_position'])
+        self.joint_angles = np.copy(config['joint_angles'])
+        self.batch_index += 1
+        
         self._update_arm_pose()
-        self.start_position = self.end_effector_position
+
         self.end_effector_position_record.append(self.start_position)
-
-        if target_position is not None:
-            self.target_position = target_position
-
-        if random_target_position:
-            while True:
-                self.target_position = np.random.rand(2) * self.SCREEN_WIDTH - self.SCREEN_WIDTH/2
-                distance_from_center = np.linalg.norm(self.target_position)
-                distance_from_end_effector = np.linalg.norm(self.target_position - self.end_effector_position)
-                if (
-                        self.MIN_CENTER_TO_TARGET_DISTANCE < distance_from_center < self.MAX_CENTER_TO_TARGET_DISTANCE and
-                        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE < distance_from_end_effector < self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE and
-                        not self._target_reached()
-                ):
-                    break
-
         self._update_distance_to_target()
         self.initial_distance_to_target = self._get_distance_to_target()
 
+        # calculations for LDV bound rendering
         m = (self.target_position[1] - self.end_effector_position[1]) / (self.target_position[0] - self.end_effector_position[0])
         m_perp = -1/m
         norm = np.linalg.norm([1, m_perp])
@@ -316,7 +332,7 @@ class Arm2d(gym.Env):
 
                 if self._check_arm_collisions():
                     info['violations'].append('arm_self_collision')
-                    if self.relax_collisions:
+                    if self.RELAX_COLLISIONS:
                         # reverse collision
                         self.joint_angles -= joint_inc
                         self._update_arm_pose()
@@ -327,7 +343,7 @@ class Arm2d(gym.Env):
 
                 if self._joint_limit_violated():
                     info['violations'].append('joint_limit_violation')
-                    if self.relax_joint_limits:
+                    if self.RELAX_JOINT_LIMITS:
                         # reverse limit violation
                         self.joint_angles -= joint_inc
                         self._update_arm_pose()
@@ -351,6 +367,7 @@ class Arm2d(gym.Env):
 
                 # add cost of linear deviation
                 dist = self._get_distance_from_line()
+                self.max_linear_deviation = min(self.max_linear_deviation, dist)
                 if dist > self.MAX_LINEAR_DEVIATION:
                     info['violations'].append('linear_deviation_violation')
                     return self._get_state(), self.LINEAR_DEVIATION_VIOLATION_COST, True, info
@@ -377,20 +394,6 @@ class Arm2d(gym.Env):
         if self.viewer is None:
             self.viewer = rendering.Viewer(self.SCREEN_WIDTH, self.SCREEN_HEIGHT)
             self.viewer.set_bounds(0, self.SCREEN_WIDTH, 0, self.SCREEN_HEIGHT)
-        # draw arm
-        for i, polygon in enumerate(self.arm_polygons):
-            x_list, y_list = polygon.exterior.coords.xy
-            points = [(x+self.SCREEN_WIDTH/2, y+self.SCREEN_HEIGHT/2) for x, y in zip(x_list, y_list)]
-            self.viewer.draw_polygon(points, color=self.ARM_COLORS[i])
-        # draw end effector
-        t = rendering.Transform(translation=end_effector_position)
-        self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.END_EFFECTOR_COLOR).add_attr(t)
-        # draw base
-        t = rendering.Transform(translation=(self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2))
-        self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.BASE_COLOR).add_attr(t)
-        # draw target
-        t = rendering.Transform(translation=target_position)
-        self.viewer.draw_circle(self.TARGET_RADIUS, color=self.TARGET_COLOR).add_attr(t)
         # draw target path
         self.viewer.draw_polyline(
             (
@@ -417,6 +420,20 @@ class Arm2d(gym.Env):
             linewidth=5,
             color=(0, 1, 0)
         )
+        # draw target
+        t = rendering.Transform(translation=target_position)
+        self.viewer.draw_circle(self.TARGET_RADIUS, color=self.TARGET_COLOR).add_attr(t)
+        # draw arm
+        for i, polygon in enumerate(self.arm_polygons):
+            x_list, y_list = polygon.exterior.coords.xy
+            points = [(x+self.SCREEN_WIDTH/2, y+self.SCREEN_HEIGHT/2) for x, y in zip(x_list, y_list)]
+            self.viewer.draw_polygon(points, color=self.ARM_COLORS[i])
+        # draw end effector
+        t = rendering.Transform(translation=end_effector_position)
+        self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.END_EFFECTOR_COLOR).add_attr(t)
+        # draw base
+        t = rendering.Transform(translation=(self.SCREEN_WIDTH/2, self.SCREEN_HEIGHT/2))
+        self.viewer.draw_circle(self.CIRCLE_RADIUS, color=self.BASE_COLOR).add_attr(t)
         return self.viewer.render(return_rgb_array='rgb_array')
 
 
