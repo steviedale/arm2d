@@ -18,20 +18,19 @@ class Arm2d(gym.Env):
         self.NUM_ARMS = 6
         self.ARM_LENGTH = (self.SCREEN_HEIGHT/2) / self.NUM_ARMS
         self.ARM_WIDTH = self.ARM_LENGTH / 10
-        self.INTERPOLATE_INC = (1 / 100) * np.pi
+        self.INTERPOLATE_INC = (1 / 200) * np.pi
         self.CIRCLE_RADIUS = 5
         self.TARGET_RADIUS = 10
-        self.RELAX_JOINT_LIMITS = None
-        self.RELAX_COLLISIONS = None
+        self.RELAX_JOINT_LIMITS = False
+        self.RELAX_COLLISIONS = False
         # CONSTRAINTS
-        self.MIN_CENTER_TO_TARGET_DISTANCE = (1/4) * self.SCREEN_WIDTH
+        self.MIN_CENTER_TO_TARGET_DISTANCE = (1/8) * self.SCREEN_WIDTH
         self.MAX_CENTER_TO_TARGET_DISTANCE = (3/8) * self.SCREEN_WIDTH
-        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE = (1/16) * self.SCREEN_WIDTH
-        self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = (1/8) * self.SCREEN_WIDTH
-        self.MAX_LINEAR_DEVIATION = (1/25) * self.SCREEN_WIDTH
+        self.MIN_END_EFFECTOR_TO_TARGET_DISTANCE = (1/32) * self.SCREEN_WIDTH
+        self.MAX_END_EFFECTOR_TO_TARGET_DISTANCE = (1/16) * self.SCREEN_WIDTH
+        self.MAX_LINEAR_DEVIATION = (1/2) * self.SCREEN_WIDTH
         self.JOINT_LIMIT = (7 / 8) * np.pi
-        self.BATCH_SIZE = 100
-        # self.MAX_LINEAR_DEVIATION = (1/25) * self.SCREEN_WIDTH
+        self.BATCH_SIZE = 1000
         self.MAX_JOINT_ROTATION = (1/50) * np.pi
         # COLORS
         self.BASE_COLOR = (0, 0, 0)
@@ -55,9 +54,9 @@ class Arm2d(gym.Env):
         self.COLLISION_COST = -2.0 / max_norm
         self.OVERSHOT_COST = -100.0 / max_norm
         self.LINEAR_DEVIATION_COST = -50.0 / self.SCREEN_WIDTH
-        self.LINEAR_DEVIATION_VIOLATION_COST = -250.0
-        self.STRICT_COLLISION_COST = -250.0
-        self.STRICT_JOINT_LIMIT_COST = -250.0
+        self.LINEAR_DEVIATION_VIOLATION_COST = -500.0
+        self.STRICT_COLLISION_COST = -500.0
+        self.STRICT_JOINT_LIMIT_COST = -500.0
         # REWARDS
         self.TARGET_PROXIMITY_REWARD = 500.0
         self.TARGET_REACHED_REWARD = 500.0
@@ -78,7 +77,6 @@ class Arm2d(gym.Env):
         self.initial_distance_to_target = None
         self.start_position = None
         self.ldv_bound_shift = None
-        self.max_linear_deviation = None
         self.batch = None
         self.batch_index = None
         self.batch_rounds = None
@@ -220,7 +218,7 @@ class Arm2d(gym.Env):
                 not collision
                 and self.MIN_CENTER_TO_TARGET_DISTANCE < dist_to_end_effector < self.MAX_CENTER_TO_TARGET_DISTANCE
                 # TODO: remove this
-                and self.end_effector_position[0] > 0 and self.end_effector_position[1] > 0
+                # and self.end_effector_position[0] > 0 and self.end_effector_position[1] > 0
             ):
                 break
             counter += 1
@@ -285,8 +283,7 @@ class Arm2d(gym.Env):
     def reset(self):
         self.end_effector_position_record = []
         self.linear_deviation = 0
-        self.max_linear_deviation = 0
-        
+
         if self.batch_index == self.BATCH_SIZE:
             self.batch_index = 0
             self.batch_rounds += 1
@@ -314,8 +311,9 @@ class Arm2d(gym.Env):
         return self._get_state()
 
     def step(self, action, continuous_render=True):
+        assert(np.max(np.abs(action)) <= 1)
         action = np.array(action) * self.MAX_JOINT_ROTATION
-        info = {'violations': [], 'target_reached': False, 'linear_deviation_cost': 0}
+        info = {'violations': [], 'target_reached': False, 'linear_deviation_cost': 0, 'movement_cost': 0}
         reward = 0
         # calculate interpolation steps
         max_angle_inc = np.max(np.abs(action))
@@ -330,6 +328,16 @@ class Arm2d(gym.Env):
                     self.render()
                     time.sleep(0.01)
 
+                # add cost of linear deviation
+                ld = self._get_distance_from_line()
+                if ld > self.MAX_LINEAR_DEVIATION:
+                    info['violations'].append('linear_deviation_violation')
+                    return self._get_state(), self.LINEAR_DEVIATION_VIOLATION_COST, True, info
+                ldc = self.LINEAR_DEVIATION_COST * (ld - self.linear_deviation)
+                self.linear_deviation = ld
+                reward += ldc
+                info['linear_deviation_cost'] += ldc
+
                 if self._check_arm_collisions():
                     info['violations'].append('arm_self_collision')
                     if self.RELAX_COLLISIONS:
@@ -339,7 +347,8 @@ class Arm2d(gym.Env):
                         reward += self.COLLISION_COST * np.linalg.norm(joint_inc * (num_steps - step))
                         break
                     else:
-                        return self._get_state(), self.STRICT_COLLISION_COST, True, info
+                        reward += self.STRICT_COLLISION_COST
+                        return self._get_state(), reward, True, info
 
                 if self._joint_limit_violated():
                     info['violations'].append('joint_limit_violation')
@@ -350,7 +359,8 @@ class Arm2d(gym.Env):
                         reward += self.JOINT_LIMIT_VIOLATION_COST * np.linalg.norm(joint_inc * (num_steps - step))
                         break
                     else:
-                        return self._get_state(), self.STRICT_JOINT_LIMIT_COST, True, info
+                        reward += self.STRICT_JOINT_LIMIT_COST
+                        return self._get_state(), reward, True, info
 
                 if self._target_reached():
                     # target reached reward
@@ -361,20 +371,12 @@ class Arm2d(gym.Env):
                     reward += self.TARGET_PROXIMITY_REWARD * (
                              distance_before - self.distance_to_target) / self.initial_distance_to_target
                     # overshot cost
-                    # reward += self.OVERSHOT_COST * np.linalg.norm(joint_inc * (num_steps - step - 1))
+                    oc = self.OVERSHOT_COST * np.linalg.norm(joint_inc * (num_steps - step - 1))
+                    reward += oc
+                    info['overshot_cost'] = oc
                     info['target_reached'] = True
                     return self._get_state(), reward, True, info
 
-                # add cost of linear deviation
-                dist = self._get_distance_from_line()
-                self.max_linear_deviation = min(self.max_linear_deviation, dist)
-                if dist > self.MAX_LINEAR_DEVIATION:
-                    info['violations'].append('linear_deviation_violation')
-                    return self._get_state(), self.LINEAR_DEVIATION_VIOLATION_COST, True, info
-                ldc = self.LINEAR_DEVIATION_COST * (dist - self.linear_deviation)
-                self.linear_deviation = dist
-                reward += ldc
-                info['linear_deviation_cost'] += ldc
                 self.end_effector_position_record.append(self.end_effector_position)
 
         # proximity reward
@@ -382,7 +384,9 @@ class Arm2d(gym.Env):
         self._update_distance_to_target()
         reward += self.TARGET_PROXIMITY_REWARD * (distance_before - self.distance_to_target) / self.initial_distance_to_target
         # movement cost
-        # reward += sum(action) * self.MOVEMENT_COST
+        movement_cost = np.linalg.norm(action) * self.MOVEMENT_COST
+        reward += movement_cost
+        info['movement_cost'] = movement_cost
         # step cost (flat cost)
         # reward += self.FLAT_COST
         return self._get_state(), reward, False, info
